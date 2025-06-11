@@ -2,12 +2,50 @@
 using CsvHelper;
 using CsvHelper.Configuration;
 using System.Text.Json;
-using RGZ_T.Models;
+using RGZ_T.Models; 
+
 class Program
 {
     static void Main(string[] args)
     {
         var classifications = LoadCsv("radio-galaxy-zoo-emu-classifications.csv");
+        var subjectMap = AnalyzeClassifications(classifications);
+        CleanSubjectMap(subjectMap);
+        SaveResults(subjectMap);
+    }
+
+    static List<Classification> LoadCsv(string path)
+    {
+        using var reader = new StreamReader(path);
+        using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture)
+        {
+            HasHeaderRecord = true,
+            BadDataFound = context => Console.WriteLine($"Bad data: {context.RawRecord}"),
+            MissingFieldFound = null
+        });
+
+        var records = new List<Classification>();
+        csv.Read();
+        csv.ReadHeader();
+
+        while (csv.Read())
+        {
+            var record = new Classification
+            {
+                AnnotationsJson = csv.GetField("annotations"),
+                SubjectDataJson = csv.GetField("subject_data"),
+                SubjectId = long.TryParse(csv.GetField("subject_ids"), out var sid) ? sid : 0
+            };
+
+            records.Add(record);
+        }
+
+        Console.WriteLine($"Loaded {records.Count} records.");
+        return records;
+    }
+
+    static Dictionary<string, Subject> AnalyzeClassifications(List<Classification> classifications)
+    {
         Dictionary<string, Subject> subjectMap = new();
 
         foreach (var record in classifications)
@@ -20,34 +58,76 @@ class Program
                     Subject subject = kvp.Value;
 
                     if (!subjectMap.TryGetValue(key, out var existing))
-                    {
                         subjectMap[key] = subject;
-                    }
 
                     if (record.Annotations != null)
                     {
                         foreach (var annotation in record.Annotations)
                         {
-                            if (!subjectMap[key].TaskData.ContainsKey(annotation.Task))
-                            {
-                                subjectMap[key].TaskData[annotation.Task] = new List<JsonElement>();
-                                subjectMap[key].TaskValueStrings[annotation.Task] = new List<string>();
-                            }
+                            if (!subject.TaskData.ContainsKey(annotation.Task))
+                                subject.TaskData[annotation.Task] = new();
 
                             if (annotation.Value.ValueKind == JsonValueKind.String)
                             {
                                 var str = annotation.Value.GetString();
                                 if (!string.IsNullOrWhiteSpace(str))
-                                {
-                                    subjectMap[key].TaskData[annotation.Task].Add(annotation.Value);
-                                    subjectMap[key].TaskValueStrings[annotation.Task].Add(str);
-                                }
+                                    subject.TaskData[annotation.Task].Add(annotation.Value);
                             }
                             else if (annotation.Value.ValueKind == JsonValueKind.Array)
                             {
                                 foreach (var item in annotation.Value.EnumerateArray())
+                                    subject.TaskData[annotation.Task].Add(item);
+                            }
+                        }
+                    }
+
+                    // Convert TaskData into structured output
+                    foreach (var task in subject.TaskData)
+                    {
+                        if (task.Key == "T1")
+                        {
+                            foreach (var labelElement in task.Value)
+                            {
+                                if (labelElement.ValueKind == JsonValueKind.String)
                                 {
-                                    subjectMap[key].TaskData[annotation.Task].Add(item);
+                                    string label = labelElement.GetString() ?? "(blank)";
+                                    if (!subject.T1LabelCounts.ContainsKey(label))
+                                        subject.T1LabelCounts[label] = 0;
+                                    subject.T1LabelCounts[label]++;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            if (!subject.Tasks.ContainsKey(task.Key))
+                                subject.Tasks[task.Key] = new();
+
+                            foreach (var entry in task.Value)
+                            {
+                                try
+                                {
+                                    if (entry.ValueKind == JsonValueKind.Object)
+                                    {
+                                        var toolLabel = entry.GetProperty("tool_label").GetString() ?? "unknown";
+                                        var value = new TaskValue
+                                        {
+                                            X = entry.GetProperty("x").GetDouble(),
+                                            Y = entry.GetProperty("y").GetDouble(),
+                                            Tool = entry.GetProperty("tool").GetInt32(),
+                                            Frame = entry.GetProperty("frame").GetInt32(),
+                                            Width = entry.TryGetProperty("width", out var w) ? w.GetDouble() : null,
+                                            Height = entry.TryGetProperty("height", out var h) ? h.GetDouble() : null,
+                                        };
+
+                                        if (!subject.Tasks[task.Key].ContainsKey(toolLabel))
+                                            subject.Tasks[task.Key][toolLabel] = new();
+
+                                        subject.Tasks[task.Key][toolLabel].Add(value);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Failed to parse task item: {ex.Message}");
                                 }
                             }
                         }
@@ -56,68 +136,44 @@ class Program
             }
         }
 
-        foreach (var kvp in subjectMap)
-        {
-            var s = kvp.Value;
-            Console.WriteLine($"Subject [{kvp.Key}]:  SubjectID={s.SubjectID}");
-            foreach (var task in s.TaskData)
-            {
-                Console.WriteLine($"  Task: {task.Key} (Entries: {task.Value.Count})");
-                foreach (var val in task.Value)
-                {
-                    Console.WriteLine($"    ␦ {val}");
-                }
-                if (s.TaskValueStrings.ContainsKey(task.Key))
-                {
-                    foreach (var val in s.TaskValueStrings[task.Key])
-                    {
-                        Console.WriteLine($"    ↪ {val}");
-                    }
-                }
-            }
-        }
+        return subjectMap;
     }
 
-    public static List<Classification> LoadCsv(string path)
+    static void CleanSubjectMap(Dictionary<string, Subject> subjectMap)
     {
-        using var reader = new StreamReader(path);
-        using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture)
+        var keysToRemove = new List<string>();
+
+        foreach (var kvp in subjectMap)
         {
-            HasHeaderRecord = true,
-            BadDataFound = context => Console.WriteLine($"Bad data: {context.RawRecord}"),
-            MissingFieldFound = null
-        });
+            var subject = kvp.Value;
 
-        var records = new List<Classification>();
-
-        csv.Read();
-        csv.ReadHeader();
-        while (csv.Read())
-        {
-            var dateStr = csv.GetField("created_at").Replace(" UTC", "").Trim();
-            var userIdStr = csv.GetField("user_id");
-            long userId = long.TryParse(userIdStr, out var uid) ? uid : 0;
-
-            var record = new Classification
+            if (string.IsNullOrWhiteSpace(subject.SubjectID))
             {
-                ClassificationId = csv.GetField<long>("classification_id"),
-                UserName = csv.GetField("user_name"),
-                UserId = userId,
-                UserIP = csv.GetField("user_ip"),
-                WorkflowId = csv.GetField<long>("workflow_id"),
-                WorkflowName = csv.GetField("workflow_name"),
-                WorkflowVersion = csv.GetField("workflow_version"),
-                CreatedAt = DateTime.ParseExact(dateStr, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
-                MetadataJson = csv.GetField("metadata"),
-                AnnotationsJson = csv.GetField("annotations"),
-                SubjectDataJson = csv.GetField("subject_data"),
-                SubjectId = long.TryParse(csv.GetField("subject_ids"), out var sid) ? sid : 0
-            };
+                keysToRemove.Add(kvp.Key);
+                continue;
+            }
 
-            records.Add(record);
+            bool hasValidTasks = subject.Tasks != null && subject.Tasks.Any(kvp => string.Compare(kvp.Key, "T0") >= 0 && kvp.Value.Count > 0);
+
+            if (!hasValidTasks)
+            {
+                keysToRemove.Add(kvp.Key);
+                continue;
+            }
         }
 
-        Console.WriteLine($"Loaded {records.Count} records.");
-        return records;
+        foreach (var key in keysToRemove)
+        {
+            subjectMap.Remove(key);
+        }
+
+        Console.WriteLine($"Filtered to {subjectMap.Count} valid subjects.");
+    }
+
+    static void SaveResults(Dictionary<string, Subject> subjectMap)
+    {
+        var json = JsonSerializer.Serialize(subjectMap, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText("subjects_output.json", json);
+        Console.WriteLine("Results have been saved as JSON.");
     }
 }

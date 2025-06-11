@@ -2,6 +2,7 @@
 
 namespace RGZ_T.Models
 {
+    // Represents one classification entry in the CSV file
     public class Classification
     {
         public long ClassificationId { get; set; }
@@ -21,4 +22,6 @@ namespace RGZ_T.Models
         public List<Annotation>? Annotations => JsonSerializer.Deserialize<List<Annotation>>(AnnotationsJson);
         public Dictionary<string, Subject>? SubjectData => JsonSerializer.Deserialize<Dictionary<string, Subject>>(SubjectDataJson);
     }
+
+
 }
