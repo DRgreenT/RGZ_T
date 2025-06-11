@@ -11,6 +11,11 @@ def sanitize_filename(s):
     s = re.sub(r'\s+', '_', s)
     return s
 
+# Plott dimensions
+
+plottSize = 1200
+plottStart = 0
+
 # Json file path
 path = "C:\\Users\\thoma\\source\\repos\\_projects\\RGZ_T\\bin\\Debug\\net9.0\\"
 
@@ -64,9 +69,16 @@ for subject_index, (subject_id, subject) in enumerate(data.items(), start=1):
             plt.title(f"{subject_id} - {task_name} - {label}")
             plt.xlabel("X")
             plt.ylabel("Y")
+            plt.xlim(plottStart, plottSize)
+            plt.ylim(plottStart, plottSize)
             # Invert y-Axis
             plt.gca().invert_yaxis()
             # plt.legend()
+
+            # Grid lines to divide plot into 9 parts (3x3 grid)
+            for i in range(1, 3):
+                plt.axhline(i * plottSize / 3, color='lightgray', linestyle='--', linewidth=0.5)
+                plt.axvline(i * plottSize / 3, color='lightgray', linestyle='--', linewidth=0.5)
 
             # Save the plot
             safe_subject = sanitize_filename(subject_id)
