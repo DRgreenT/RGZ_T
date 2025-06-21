@@ -15,3 +15,10 @@
 - Plotter now plots all tasks in one plot for each subject id
 - Plotter uses different colors for each task
 - Plotter now uses a legend to identify the tasks
+
+## Update #4
+- legend now allways at the bottom of the plot
+- if plotter finds a image with the same name as the plot, it will be used as background
+- if no image is found, creating is skipped
+- marking colors now definable
+- final stats now shown at the end of the process
